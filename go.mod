@@ -1,4 +1,4 @@
-module github.com/khaleejiapi/sdk-go
+module github.com/xidioda/khaleejiapi-go
 
 go 1.22
 
