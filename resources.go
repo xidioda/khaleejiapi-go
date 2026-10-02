@@ -1,6 +1,9 @@
 package khaleejiapi
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // ValidationResource provides access to validation APIs.
 type ValidationResource struct {
@@ -9,19 +12,30 @@ type ValidationResource struct {
 
 // EmailResult represents an email validation result.
 type EmailResult struct {
-	Valid      bool        `json:"valid"`
-	Email      string      `json:"email"`
-	Checks     EmailChecks `json:"checks,omitempty"`
-	Suggestion string      `json:"suggestion,omitempty"`
-	Domain     string      `json:"domain,omitempty"`
+	Valid               bool           `json:"valid"`
+	Email               string         `json:"email"`
+	DeliverabilityScore int            `json:"deliverabilityScore"`
+	Checks              EmailChecks    `json:"checks,omitempty"`
+	Provider            *EmailProvider `json:"provider,omitempty"`
+	SPF                 *bool          `json:"spf"`
+	DMARC               *bool          `json:"dmarc"`
+	Suggestion          *string        `json:"suggestion,omitempty"`
+	Domain              string         `json:"domain,omitempty"`
+	Normalized          string         `json:"normalized,omitempty"`
 }
 
 type EmailChecks struct {
-	Format     *bool `json:"format,omitempty"`
-	Syntax     *bool `json:"syntax,omitempty"`
-	MX         bool  `json:"mx"`
-	Disposable bool  `json:"disposable"`
-	Role       bool  `json:"role"`
+	Format       bool `json:"format"`
+	MX           bool `json:"mx"`
+	Disposable   bool `json:"disposable"`
+	Role         bool `json:"role"`
+	FreeProvider bool `json:"freeProvider"`
+}
+
+// EmailProvider identifies the email service provider.
+type EmailProvider struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 // ValidateEmail validates an email address.
@@ -31,12 +45,39 @@ func (r *ValidationResource) ValidateEmail(ctx context.Context, email string) (*
 
 // PhoneResult represents a phone validation result.
 type PhoneResult struct {
-	Valid       bool   `json:"valid"`
-	Phone       string `json:"phone"`
-	Formatted   string `json:"formatted,omitempty"`
-	CountryCode string `json:"countryCode,omitempty"`
-	Type        string `json:"type,omitempty"`
-	Carrier     string `json:"carrier,omitempty"`
+	Valid          bool          `json:"valid"`
+	Phone          string        `json:"phone"`
+	Country        PhoneCountry  `json:"country"`
+	Type           string        `json:"type,omitempty"`
+	Carrier        *PhoneCarrier `json:"carrier,omitempty"`
+	AreaCode       string        `json:"areaCode,omitempty"`
+	AreaName       string        `json:"areaName,omitempty"`
+	Formats        PhoneFormats  `json:"formats"`
+	PortingNote    string        `json:"portingNote,omitempty"`
+	NationalNumber string        `json:"nationalNumber,omitempty"`
+	Reason         string        `json:"reason,omitempty"`
+}
+
+// PhoneCountry contains country info for a phone number.
+type PhoneCountry struct {
+	Name     string `json:"name"`
+	Code     string `json:"code"`
+	DialCode string `json:"dialCode"`
+}
+
+// PhoneCarrier contains carrier/operator information.
+type PhoneCarrier struct {
+	Name string `json:"name"`
+	MCC  string `json:"mcc"`
+	MNC  string `json:"mnc"`
+}
+
+// PhoneFormats contains various phone number format representations.
+type PhoneFormats struct {
+	E164          string `json:"e164"`
+	International string `json:"international"`
+	Local         string `json:"local"`
+	RFC3966       string `json:"rfc3966"`
 }
 
 // ValidatePhone validates a phone number.
@@ -64,37 +105,113 @@ func (r *ValidationResource) ValidateIBAN(ctx context.Context, iban string) (*IB
 
 // VATResult represents a VAT/TRN validation result.
 type VATResult struct {
-	Valid   bool   `json:"valid"`
-	TRN     string `json:"trn"`
-	Country string `json:"country,omitempty"`
+	TIN             string       `json:"tin"`
+	Valid           bool         `json:"valid"`
+	Country         VATCountry   `json:"country"`
+	Authority       VATAuthority `json:"authority"`
+	VATRate         float64      `json:"vatRate"`
+	VATRateNote     string       `json:"vatRateNote,omitempty"`
+	EffectiveDate   string       `json:"effectiveDate,omitempty"`
+	Format          string       `json:"format,omitempty"`
+	CheckDigitValid bool         `json:"checkDigitValid"`
+	Reason          string       `json:"reason,omitempty"`
 }
 
-// ValidateVAT validates a VAT/TRN number.
-func (r *ValidationResource) ValidateVAT(ctx context.Context, trn string) (*VATResult, error) {
-	return doGet[*VATResult](r.client, ctx, "/vat/validate", map[string]string{"trn": trn})
+// VATCountry contains country info for VAT validation.
+type VATCountry struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+// VATAuthority contains tax authority information.
+type VATAuthority struct {
+	Name   string `json:"name"`
+	NameAr string `json:"nameAr"`
+	URL    string `json:"url"`
+}
+
+// ValidateVAT validates a VAT/TRN/TIN number across GCC countries.
+func (r *ValidationResource) ValidateVAT(ctx context.Context, trn string, countryCode string) (*VATResult, error) {
+	params := map[string]string{"trn": trn}
+	if countryCode != "" {
+		params["country"] = countryCode
+	}
+	return doGet[*VATResult](r.client, ctx, "/vat/validate", params)
 }
 
 // EmiratesIDResult represents an Emirates ID validation result.
 type EmiratesIDResult struct {
-	Valid           bool   `json:"valid"`
-	ID              string `json:"id"`
-	NationalityCode string `json:"nationalityCode,omitempty"`
-	BirthYear       int    `json:"birthYear,omitempty"`
+	EmiratesID string               `json:"emiratesId"`
+	Valid      bool                 `json:"valid"`
+	Formatted  string               `json:"formatted,omitempty"`
+	Components EmiratesIDComponents `json:"components"`
+	Details    *EmiratesIDDetails   `json:"details,omitempty"`
+	Authority  EmiratesIDAuthority  `json:"authority"`
+	Message    string               `json:"message,omitempty"`
+}
+
+// EmiratesIDComponents contains the parsed components of an Emirates ID.
+type EmiratesIDComponents struct {
+	CountryCode string `json:"countryCode"`
+	Year        string `json:"year"`
+	Random      string `json:"random"`
+	CheckDigit  string `json:"checkDigit"`
+}
+
+// EmiratesIDDetails contains age and generation info.
+type EmiratesIDDetails struct {
+	BirthYear    int    `json:"birthYear"`
+	EstimatedAge int    `json:"estimatedAge"`
+	AgeRange     string `json:"ageRange"`
+	Generation   string `json:"generation"`
+	IDType       string `json:"idType"`
+	IDTypeAr     string `json:"idTypeAr"`
+}
+
+// EmiratesIDAuthority contains issuing authority information.
+type EmiratesIDAuthority struct {
+	Name   string `json:"name"`
+	NameAr string `json:"nameAr"`
+	URL    string `json:"url"`
 }
 
 // ValidateEmiratesID validates a UAE Emirates ID.
 func (r *ValidationResource) ValidateEmiratesID(ctx context.Context, id string) (*EmiratesIDResult, error) {
-	return doGet[*EmiratesIDResult](r.client, ctx, "/validation/emirates-id", map[string]string{"id": id})
+	return doGet[*EmiratesIDResult](r.client, ctx, "/emirates-id/validate", map[string]string{"id": id})
 }
 
 // SaudiIDResult represents a Saudi ID validation result.
 type SaudiIDResult struct {
-	ID          string   `json:"id"`
-	Valid       bool     `json:"valid"`
-	Type        string   `json:"type,omitempty"`
-	TypeAr      string   `json:"typeAr,omitempty"`
-	Nationality string   `json:"nationality,omitempty"`
-	Errors      []string `json:"errors,omitempty"`
+	ID            string            `json:"id"`
+	Valid         bool              `json:"valid"`
+	Type          string            `json:"type,omitempty"`
+	TypeAr        string            `json:"typeAr,omitempty"`
+	Nationality   string            `json:"nationality,omitempty"`
+	NationalityAr string            `json:"nationalityAr,omitempty"`
+	Description   string            `json:"description,omitempty"`
+	DescriptionAr string            `json:"descriptionAr,omitempty"`
+	Details       *SaudiIDDetails   `json:"details,omitempty"`
+	Authority     *SaudiIDAuthority `json:"authority,omitempty"`
+	Errors        []string          `json:"errors,omitempty"`
+}
+
+// SaudiIDDetails contains parsed ID details with age/generation.
+type SaudiIDDetails struct {
+	Prefix                      int    `json:"prefix"`
+	BirthYearHijri              string `json:"birthYearHijri"`
+	EstimatedBirthYearGregorian int    `json:"estimatedBirthYearGregorian"`
+	EstimatedAge                int    `json:"estimatedAge"`
+	AgeRange                    string `json:"ageRange"`
+	Generation                  string `json:"generation"`
+	SerialPart                  string `json:"serialPart"`
+	CheckDigit                  int    `json:"checkDigit"`
+}
+
+// SaudiIDAuthority contains issuing authority information.
+type SaudiIDAuthority struct {
+	Name   string `json:"name"`
+	NameAr string `json:"nameAr"`
+	URL    string `json:"url"`
 }
 
 // SaudiIDBatchResult represents a batch Saudi ID validation result.
@@ -112,7 +229,7 @@ type BatchSummary struct {
 
 // ValidateSaudiID validates a Saudi National ID or Iqama.
 func (r *ValidationResource) ValidateSaudiID(ctx context.Context, id string) (*SaudiIDResult, error) {
-	return doGet[*SaudiIDResult](r.client, ctx, "/validation/saudi-id", map[string]string{"id": id})
+	return doGet[*SaudiIDResult](r.client, ctx, "/saudi-id/validate", map[string]string{"id": id})
 }
 
 // ValidateSaudiIDBatch validates multiple Saudi IDs (max 100).
@@ -120,7 +237,7 @@ func (r *ValidationResource) ValidateSaudiIDBatch(ctx context.Context, ids []str
 	body := struct {
 		IDs []string `json:"ids"`
 	}{IDs: ids}
-	return doPost[*SaudiIDBatchResult](r.client, ctx, "/validation/saudi-id", body)
+	return doPost[*SaudiIDBatchResult](r.client, ctx, "/saudi-id/validate", body)
 }
 
 // GeoResource provides access to geolocation APIs.
@@ -164,15 +281,72 @@ func (r *GeoResource) GetTimezone(ctx context.Context, location string) (*Timezo
 
 // GeocodeResult represents a geocoding result.
 type GeocodeResult struct {
-	Address   string  `json:"address,omitempty"`
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Country   string  `json:"country,omitempty"`
+	Results     []GeocodeItem `json:"results"`
+	Attribution string        `json:"attribution,omitempty"`
 }
 
-// Geocode converts an address to coordinates.
-func (r *GeoResource) Geocode(ctx context.Context, address string) (*GeocodeResult, error) {
-	return doGet[*GeocodeResult](r.client, ctx, "/geocode", map[string]string{"address": address})
+// GeocodeItem represents a single geocode result.
+type GeocodeItem struct {
+	Name        string              `json:"name"`
+	NameAr      string              `json:"nameAr,omitempty"`
+	Lat         float64             `json:"lat"`
+	Lng         float64             `json:"lng"`
+	Country     string              `json:"country,omitempty"`
+	CountryAr   string              `json:"countryAr,omitempty"`
+	CountryCode string              `json:"countryCode,omitempty"`
+	Type        string              `json:"type,omitempty"`
+	Address     GeocodeAddress      `json:"address"`
+	OsmID       *int                `json:"osmId,omitempty"`
+	Importance  *float64            `json:"importance,omitempty"`
+	BoundingBox *GeocodeBoundingBox `json:"boundingBox,omitempty"`
+}
+
+// GeocodeAddress contains structured address components.
+type GeocodeAddress struct {
+	Road          *string `json:"road"`
+	Neighbourhood *string `json:"neighbourhood"`
+	City          *string `json:"city"`
+	State         *string `json:"state"`
+	Postcode      *string `json:"postcode"`
+	Full          string  `json:"full"`
+}
+
+// GeocodeBoundingBox contains the geographic bounding box.
+type GeocodeBoundingBox struct {
+	South float64 `json:"south"`
+	North float64 `json:"north"`
+	West  float64 `json:"west"`
+	East  float64 `json:"east"`
+}
+
+// GeocodeParams contains parameters for the geocode API.
+type GeocodeParams struct {
+	Address string
+	Lat     float64
+	Lon     float64
+	Country string
+	Lang    string
+}
+
+// Geocode converts an address to coordinates or vice versa.
+func (r *GeoResource) Geocode(ctx context.Context, p GeocodeParams) (*GeocodeResult, error) {
+	params := map[string]string{}
+	if p.Address != "" {
+		params["q"] = p.Address
+	}
+	if p.Lat != 0 {
+		params["lat"] = fmt.Sprintf("%f", p.Lat)
+	}
+	if p.Lon != 0 {
+		params["lng"] = fmt.Sprintf("%f", p.Lon)
+	}
+	if p.Country != "" {
+		params["country"] = p.Country
+	}
+	if p.Lang != "" {
+		params["lang"] = p.Lang
+	}
+	return doGet[*GeocodeResult](r.client, ctx, "/geocode", params)
 }
 
 // FinanceResource provides access to finance APIs.
@@ -219,24 +393,63 @@ func (r *FinanceResource) CalculateVAT(ctx context.Context, amount float64, coun
 
 // HolidaysResult represents public holidays data.
 type HolidaysResult struct {
-	Country  string    `json:"country"`
-	Year     int       `json:"year"`
-	Holidays []Holiday `json:"holidays"`
+	Country        string       `json:"country"`
+	CountryName    string       `json:"countryName,omitempty"`
+	Year           int          `json:"year"`
+	Weekends       []string     `json:"weekends,omitempty"`
+	Holidays       []Holiday    `json:"holidays"`
+	TotalDays      int          `json:"totalDays,omitempty"`
+	AvailableYears []int        `json:"availableYears,omitempty"`
+	NextHoliday    *NextHoliday `json:"nextHoliday,omitempty"`
 }
 
 // Holiday represents a single public holiday.
 type Holiday struct {
-	Name   string `json:"name"`
-	NameAr string `json:"nameAr,omitempty"`
-	Date   string `json:"date"`
-	Type   string `json:"type"`
+	Name      string `json:"name"`
+	NameAr    string `json:"nameAr,omitempty"`
+	Date      string `json:"date"`
+	EndDate   string `json:"endDate,omitempty"`
+	Type      string `json:"type"`
+	Sector    string `json:"sector,omitempty"`
+	DayOfWeek string `json:"dayOfWeek,omitempty"`
+	DaysUntil int    `json:"daysUntil"`
+	IsPast    bool   `json:"isPast"`
+	Note      string `json:"note,omitempty"`
+}
+
+// NextHoliday represents the next upcoming holiday.
+type NextHoliday struct {
+	Name      string `json:"name"`
+	Date      string `json:"date"`
+	DaysUntil int    `json:"daysUntil"`
+}
+
+// HolidaysParams contains parameters for the holidays API.
+type HolidaysParams struct {
+	Country string
+	Year    int
+	Mode    string // "next" or "check"
+	Date    string
+	Month   int
 }
 
 // GetHolidays gets public holidays for a GCC country.
-func (r *FinanceResource) GetHolidays(ctx context.Context, country string, year int) (*HolidaysResult, error) {
-	params := map[string]string{"country": country}
-	if year > 0 {
-		params["year"] = fmt.Sprintf("%d", year)
+func (r *FinanceResource) GetHolidays(ctx context.Context, p HolidaysParams) (*HolidaysResult, error) {
+	params := map[string]string{}
+	if p.Country != "" {
+		params["country"] = p.Country
+	}
+	if p.Year > 0 {
+		params["year"] = fmt.Sprintf("%d", p.Year)
+	}
+	if p.Mode != "" {
+		params["mode"] = p.Mode
+	}
+	if p.Date != "" {
+		params["date"] = p.Date
+	}
+	if p.Month > 0 {
+		params["month"] = fmt.Sprintf("%d", p.Month)
 	}
 	return doGet[*HolidaysResult](r.client, ctx, "/holidays", params)
 }
@@ -482,9 +695,39 @@ func (r *UtilityResource) GetWeather(ctx context.Context, city string) (*Weather
 
 // FraudResult represents a fraud check result.
 type FraudResult struct {
-	RiskScore      int    `json:"riskScore"`
-	RiskLevel      string `json:"riskLevel"`
-	Recommendation string `json:"recommendation,omitempty"`
+	RiskScore          int                  `json:"riskScore"`
+	RiskLevel          string               `json:"riskLevel"`
+	Recommendation     string               `json:"recommendation,omitempty"`
+	Signals            []FraudSignal        `json:"signals,omitempty"`
+	IpIntelligence     *FraudIpIntelligence `json:"ipIntelligence,omitempty"`
+	CrossFieldAnalysis []FraudCrossField    `json:"crossFieldAnalysis,omitempty"`
+}
+
+// FraudSignal represents a single fraud signal.
+type FraudSignal struct {
+	Field  string `json:"field"`
+	Risk   string `json:"risk"`
+	Score  int    `json:"score"`
+	Reason string `json:"reason"`
+}
+
+// FraudIpIntelligence contains MaxMind IP intelligence data.
+type FraudIpIntelligence struct {
+	Country            string `json:"country"`
+	IsTorExitNode      bool   `json:"isTorExitNode"`
+	IsAnonymousVpn     bool   `json:"isAnonymousVpn"`
+	IsPublicProxy      bool   `json:"isPublicProxy"`
+	IsHostingProvider  bool   `json:"isHostingProvider"`
+	IsResidentialProxy bool   `json:"isResidentialProxy"`
+	ISP                string `json:"isp"`
+	Organization       string `json:"organization"`
+}
+
+// FraudCrossField represents a cross-field analysis result.
+type FraudCrossField struct {
+	Type   string `json:"type"`
+	Risk   string `json:"risk"`
+	Detail string `json:"detail"`
 }
 
 // FraudCheckParams contains parameters for fraud checking.
@@ -492,6 +735,7 @@ type FraudCheckParams struct {
 	IP    string `json:"ip,omitempty"`
 	Email string `json:"email,omitempty"`
 	Phone string `json:"phone,omitempty"`
+	Name  string `json:"name,omitempty"`
 }
 
 // FraudCheck checks for fraud.
