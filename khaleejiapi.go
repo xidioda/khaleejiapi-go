@@ -22,8 +22,8 @@ import (
 const (
 	defaultBaseURL = "https://khaleejiapi.dev/api/v1"
 	defaultTimeout = 30 * time.Second
-	userAgent      = "khaleejiapi-go/1.0.0"
-	version        = "1.0.0"
+	userAgent      = "khaleejiapi-go/1.1.0"
+	version        = "1.1.0"
 )
 
 // Config holds the configuration for the KhaleejiAPI client.
@@ -115,6 +115,8 @@ type APIError struct {
 	StatusCode    int
 	Code          string
 	Message       string
+	MessageEn     string
+	MessageAr     string
 	RateLimitInfo *RateLimitInfo
 }
 
@@ -122,10 +124,22 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("khaleejiapi: %s (%d): %s", e.Code, e.StatusCode, e.Message)
 }
 
+func (e *APIError) LocalizedMessage(locale string) string {
+	if locale == "ar" && e.MessageAr != "" {
+		return e.MessageAr
+	}
+	if e.MessageEn != "" {
+		return e.MessageEn
+	}
+	return e.Message
+}
+
 type apiErrorResponse struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		MessageEn string `json:"messageEn"`
+		MessageAr string `json:"messageAr"`
 	} `json:"error"`
 }
 
@@ -135,7 +149,7 @@ func doGet[T any](c *Client, ctx context.Context, path string, params map[string
 
 	u, err := url.Parse(c.config.BaseURL + path)
 	if err != nil {
-		return zero, &APIError{StatusCode: 0, Code: "INVALID_URL", Message: err.Error()}
+		return zero, &APIError{StatusCode: 0, Code: "INVALID_URL", Message: err.Error(), MessageEn: err.Error(), MessageAr: err.Error()}
 	}
 
 	q := u.Query()
@@ -148,7 +162,7 @@ func doGet[T any](c *Client, ctx context.Context, path string, params map[string
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return zero, &APIError{StatusCode: 0, Code: "REQUEST_ERROR", Message: err.Error()}
+		return zero, &APIError{StatusCode: 0, Code: "REQUEST_ERROR", Message: err.Error(), MessageEn: err.Error(), MessageAr: err.Error()}
 	}
 
 	return execute[T](c, req)
@@ -162,14 +176,14 @@ func doPost[T any](c *Client, ctx context.Context, path string, body any) (T, er
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
-			return zero, &APIError{StatusCode: 0, Code: "MARSHAL_ERROR", Message: err.Error()}
+			return zero, &APIError{StatusCode: 0, Code: "MARSHAL_ERROR", Message: err.Error(), MessageEn: err.Error(), MessageAr: err.Error()}
 		}
 		bodyReader = bytes.NewReader(jsonBody)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.BaseURL+path, bodyReader)
 	if err != nil {
-		return zero, &APIError{StatusCode: 0, Code: "REQUEST_ERROR", Message: err.Error()}
+		return zero, &APIError{StatusCode: 0, Code: "REQUEST_ERROR", Message: err.Error(), MessageEn: err.Error(), MessageAr: err.Error()}
 	}
 
 	if body != nil {
@@ -205,7 +219,7 @@ func execute[T any](c *Client, req *http.Request) (T, error) {
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			lastErr = &APIError{StatusCode: 0, Code: "NETWORK_ERROR", Message: err.Error()}
+			lastErr = &APIError{StatusCode: 0, Code: "NETWORK_ERROR", Message: err.Error(), MessageEn: err.Error(), MessageAr: err.Error()}
 			continue
 		}
 		defer resp.Body.Close()
@@ -215,16 +229,39 @@ func execute[T any](c *Client, req *http.Request) (T, error) {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			var apiResp apiResponse[T]
 			if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-				return zero, &APIError{StatusCode: resp.StatusCode, Code: "DECODE_ERROR", Message: err.Error()}
+				return zero, &APIError{StatusCode: resp.StatusCode, Code: "DECODE_ERROR", Message: err.Error(), MessageEn: err.Error(), MessageAr: err.Error()}
 			}
 			return apiResp.Data, nil
 		}
 
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		var apiErr apiErrorResponse
+
 		if resp.StatusCode == 429 {
+			messageEn := "Rate limited"
+			messageAr := messageEn
+			code := "RATE_LIMITED"
+			if json.Unmarshal(bodyBytes, &apiErr) == nil {
+				if apiErr.Error.Code != "" {
+					code = apiErr.Error.Code
+				}
+				if apiErr.Error.MessageEn != "" {
+					messageEn = apiErr.Error.MessageEn
+				} else if apiErr.Error.Message != "" {
+					messageEn = apiErr.Error.Message
+				}
+				if apiErr.Error.MessageAr != "" {
+					messageAr = apiErr.Error.MessageAr
+				} else {
+					messageAr = messageEn
+				}
+			}
 			lastErr = &APIError{
 				StatusCode:    429,
-				Code:          "RATE_LIMITED",
-				Message:       fmt.Sprintf("Rate limited. Retry after %d seconds", rateLimitInfo.Reset),
+				Code:          code,
+				Message:       messageEn,
+				MessageEn:     messageEn,
+				MessageAr:     messageAr,
 				RateLimitInfo: rateLimitInfo,
 			}
 			if attempt < c.config.MaxRetries {
@@ -233,32 +270,39 @@ func execute[T any](c *Client, req *http.Request) (T, error) {
 			return zero, lastErr
 		}
 
-		// Parse error response
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		var apiErr apiErrorResponse
 		code := "SERVER_ERROR"
-		message := fmt.Sprintf("HTTP %d", resp.StatusCode)
+		messageEn := fmt.Sprintf("HTTP %d", resp.StatusCode)
+		messageAr := messageEn
 		if json.Unmarshal(bodyBytes, &apiErr) == nil && apiErr.Error.Code != "" {
 			code = apiErr.Error.Code
-			message = apiErr.Error.Message
+			if apiErr.Error.MessageEn != "" {
+				messageEn = apiErr.Error.MessageEn
+			} else if apiErr.Error.Message != "" {
+				messageEn = apiErr.Error.Message
+			}
+			if apiErr.Error.MessageAr != "" {
+				messageAr = apiErr.Error.MessageAr
+			} else {
+				messageAr = messageEn
+			}
 		}
 
 		switch resp.StatusCode {
 		case 401:
-			return zero, &APIError{StatusCode: 401, Code: "UNAUTHORIZED", Message: "Invalid or missing API key"}
+			return zero, &APIError{StatusCode: 401, Code: code, Message: messageEn, MessageEn: messageEn, MessageAr: messageAr}
 		case 403:
-			return zero, &APIError{StatusCode: 403, Code: "FORBIDDEN", Message: message}
+			return zero, &APIError{StatusCode: 403, Code: code, Message: messageEn, MessageEn: messageEn, MessageAr: messageAr}
 		case 404:
-			return zero, &APIError{StatusCode: 404, Code: "NOT_FOUND", Message: "Resource not found"}
+			return zero, &APIError{StatusCode: 404, Code: code, Message: messageEn, MessageEn: messageEn, MessageAr: messageAr}
 		default:
-			return zero, &APIError{StatusCode: resp.StatusCode, Code: code, Message: message}
+			return zero, &APIError{StatusCode: resp.StatusCode, Code: code, Message: messageEn, MessageEn: messageEn, MessageAr: messageAr}
 		}
 	}
 
 	if lastErr != nil {
 		return zero, lastErr
 	}
-	return zero, &APIError{StatusCode: 500, Code: "UNKNOWN", Message: "Unknown error"}
+	return zero, &APIError{StatusCode: 500, Code: "UNKNOWN", Message: "Unknown error", MessageEn: "Unknown error", MessageAr: "Unknown error"}
 }
 
 func parseRateLimitHeaders(resp *http.Response) *RateLimitInfo {
